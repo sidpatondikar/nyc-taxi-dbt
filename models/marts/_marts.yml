@@ -1,0 +1,34 @@
+version: 2
+
+models:
+  - name: dim_zones
+    description: One row per TLC taxi zone (265). Join to fct_trips on location IDs.
+    columns:
+      - name: location_id
+        description: Primary key. TLC zone ID.
+        data_tests:
+          - unique
+          - not_null
+
+  - name: fct_trips
+    description: >
+      One row per yellow taxi trip, Jan-Mar 2024. Reversals (negative fares) are
+      kept so revenue nets out; filter on is_valid_for_analysis for averages.
+    columns:
+      - name: trip_id
+        description: Surrogate key, a hash of the columns that identify a trip.
+        data_tests:
+          - unique
+          - not_null
+      - name: pickup_location_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_zones')
+                field: location_id
+      - name: dropoff_location_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_zones')
+                field: location_id
