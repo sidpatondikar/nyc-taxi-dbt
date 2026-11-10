@@ -1,0 +1,33 @@
+version: 2
+
+models:
+  - name: int_trips_enriched
+    description: >
+      One row per trip with zone names, derived metrics, and data-quality flags.
+      Physically impossible rows (dropoff before pickup, pickup far outside the
+      file's month) are removed; everything else is kept and flagged.
+    data_tests:
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "dropoff_at >= pickup_at"
+    columns:
+      - name: file_month
+        description: Month the trip was published in, parsed from the source file name (YYYY-MM).
+        data_tests:
+          - not_null
+      - name: pickup_borough
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['Bronx', 'Brooklyn', 'EWR', 'Manhattan', 'Queens', 'Staten Island', 'Unknown', 'N/A']
+      - name: dropoff_borough
+        data_tests:
+          - not_null
+      - name: trip_duration_min
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+      - name: is_valid_for_analysis
+        description: True when the trip passes every quality flag. Marts filter on this for averages like speed and fare.
