@@ -1,0 +1,51 @@
+version: 2
+
+models:
+  - name: stg_taxi_zones
+    description: One row per TLC taxi zone. Maps a location ID to its borough and zone name.
+    columns:
+      - name: location_id
+        description: TLC zone ID. Matches pickup/dropoff location IDs in trips.
+        data_tests:
+          - unique
+          - not_null
+      - name: borough
+        data_tests:
+          - not_null
+
+  - name: stg_yellow_trips
+    description: One row per raw yellow taxi trip, renamed and typed. Not filtered yet.
+    columns:
+      - name: pickup_at
+        data_tests:
+          - not_null
+      - name: dropoff_at
+        data_tests:
+          - not_null
+      - name: passenger_count
+        description: Number of passengers. Always null on flex-fare trips (payment_type = 0), which don't record it.
+        data_tests:
+          - not_null:
+              config:
+                where: "payment_type != 0"
+      - name: payment_type
+        description: 0=Flex fare, 1=Credit card, 2=Cash, 3=No charge, 4=Dispute, 5=Unknown, 6=Voided
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [0, 1, 2, 3, 4, 5, 6]
+                quote: false
+      - name: pickup_location_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_taxi_zones')
+                field: location_id
+      - name: dropoff_location_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_taxi_zones')
+                field: location_id
