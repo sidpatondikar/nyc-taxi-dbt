@@ -32,3 +32,26 @@ models:
               arguments:
                 to: ref('dim_zones')
                 field: location_id
+  
+  
+  - name: agg_daily_zone_revenue
+    description: >
+      One row per pickup date and pickup borough. Revenue is net of reversals;
+      averages use only trips where is_valid_for_analysis is true.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - pickup_date
+              - pickup_borough
+    columns:
+      - name: pickup_date
+        data_tests:
+          - not_null
+      - name: pickup_borough
+        data_tests:
+          - not_null
+      - name: trip_count
+        description: Trips in the day/borough, excluding reversal rows.
+      - name: total_revenue
+        description: Sum of total_amount including reversals, so refunded trips net to zero.
