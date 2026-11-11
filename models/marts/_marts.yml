@@ -20,6 +20,12 @@ models:
         data_tests:
           - unique
           - not_null
+      - name: payment_type
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('payment_types')
+                field: payment_type
       - name: pickup_location_id
         data_tests:
           - relationships:
@@ -55,3 +61,6 @@ models:
         description: Trips in the day/borough, excluding reversal rows.
       - name: total_revenue
         description: Sum of total_amount including reversals, so refunded trips net to zero.
+
+  
+  

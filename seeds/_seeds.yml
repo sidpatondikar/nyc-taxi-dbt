@@ -1,0 +1,17 @@
+version: 2
+
+seeds:
+  - name: payment_types
+    description: TLC payment_type codes and their names (TLC data dictionary, Mar 2025).
+    config:
+      column_types:
+        payment_type: integer
+        payment_type_name: varchar
+    columns:
+      - name: payment_type
+        data_tests:
+          - unique
+          - not_null
+      - name: payment_type_name
+        data_tests:
+          - not_null
