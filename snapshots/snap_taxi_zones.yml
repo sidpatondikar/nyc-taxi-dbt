@@ -1,0 +1,8 @@
+snapshots:
+  - name: snap_taxi_zones
+    relation: source('raw', 'taxi_zones')
+    description: SCD Type 2 history of the TLC zone lookup. One row per version of each zone.
+    config:
+      unique_key: LocationID
+      strategy: check
+      check_cols: all
