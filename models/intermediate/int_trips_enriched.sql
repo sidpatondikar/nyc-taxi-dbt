@@ -41,10 +41,8 @@ derived as (
         hour(pickup_at)                                                    as pickup_hour,
         isodow(pickup_at) in (6, 7)                                        as is_weekend,
         date_diff('second', pickup_at, dropoff_at) / 60.0                  as trip_duration_min,
-        trip_distance
-            / nullif(date_diff('second', pickup_at, dropoff_at) / 3600.0, 0) as avg_speed_mph,
-        tip_amount / nullif(fare_amount, 0)                                as tip_pct
-
+        {{ safe_divide("trip_distance", "date_diff('second', pickup_at, dropoff_at) / 3600.0") }} as avg_speed_mph,
+        {{ safe_divide("tip_amount", "fare_amount") }}                     as tip_pct
     from joined
 
 ),

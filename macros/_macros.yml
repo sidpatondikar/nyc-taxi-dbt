@@ -1,0 +1,12 @@
+version: 2
+
+macros:
+  - name: safe_divide
+    description: Divides two SQL expressions; returns null instead of erroring when the denominator is 0.
+    arguments:
+      - name: numerator
+        type: string
+        description: SQL expression for the top of the fraction.
+      - name: denominator
+        type: string
+        description: SQL expression for the bottom of the fraction. Treated as null when 0.

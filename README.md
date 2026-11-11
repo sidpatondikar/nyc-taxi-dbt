@@ -27,7 +27,7 @@ It is the SQL/analytics-engineering companion to [NYC-Taxi-Pipeline](https://git
   │ taxi_zone_lookup.csv     │────▶│ taxi_zones │──▶│ stg_taxi_zones   │──┤   │ metrics, DQ flags    │  └──▶┌───────────────────────────┐
   │   (265 zones)            │     └────────────┘   └──────────────────┘  │   └──────────────────────┘      │ agg_daily_zone_revenue ✅ │
   └──────────────────────────┘                                            │                                 └───────────────────────────┘
-                                   seeds/payment_types.csv 🔜             └────────────────────────────────▶┌───────────────────────────┐
+                                   seeds/payment_types.csv ✅             └────────────────────────────────▶┌───────────────────────────┐
                                    snapshots/snap_taxi_zones 🔜 (SCD2)                                       │ dim_zones            ✅    │
                                                                                                              └───────────────────────────┘
 ```
@@ -72,7 +72,7 @@ Materializations are set per folder in `dbt_project.yml` and can be overridden p
 ### Intermediate: `int_trips_enriched`
 Built as four CTEs, each doing one job:
 1. **Join**: trips joined to zones **twice** (pickup and dropoff) for real borough and zone names.
-2. **Derive**: `trip_duration_min`, `avg_speed_mph`, `tip_pct`, `pickup_date`, `pickup_hour`, `is_weekend`, and `file_month` (parsed from the file name with a regex).
+2. **Derive**: `trip_duration_min`, `avg_speed_mph`, `tip_pct`, `pickup_date`, `pickup_hour`, `is_weekend`, and `file_month` (parsed from the file name with a regex). Divisions use the custom **`safe_divide`** macro, so a zero duration or zero fare returns null instead of an error.
 3. **Flag**: `is_reversal`, `is_in_file_month`, `has_valid_duration`, `has_valid_distance`, `has_valid_fare_cap`, and a combined `is_valid_for_analysis`.
 4. **Filter**: removes only *physically impossible* rows (dropoff before pickup; pickup more than a day outside the file's month). **189 rows removed.**
 
@@ -109,13 +109,14 @@ Simulated monthly releases by adding one Parquet file to `data/raw/` at a time:
 
 ## Data quality
 
-### Tests: 27 total, all passing
+### Tests: 31 total, all passing
 
 | Layer | Tests |
 |---|---|
 | Staging (11) | `unique` / `not_null` on zone ID; `not_null` on timestamps and location IDs; `accepted_values` on `payment_type`; `relationships` from pickup/dropoff location to zones; conditional `not_null` on `passenger_count` (`where: payment_type != 0`) |
 | Intermediate (6) | `not_null` on both boroughs (join worked) and `file_month` (regex worked); `accepted_values` on borough; `dbt_utils.expression_is_true` (`dropoff_at >= pickup_at`); `dbt_utils.accepted_range` (duration ≥ 0) |
-| Marts (9) | `unique` / `not_null` on `dim_zones.location_id` and `fct_trips.trip_id`; `relationships` from fact to dimension for both location IDs; `dbt_utils.unique_combination_of_columns` on (`pickup_date`, `pickup_borough`) for the aggregate's grain; `not_null` on both |
+| Seed (3) | `unique` / `not_null` on `payment_types.payment_type`; `not_null` on `payment_type_name` |
+| Marts (10) | `unique` / `not_null` on `dim_zones.location_id` and `fct_trips.trip_id`; `relationships` from fact to dimension for both location IDs and from `fct_trips.payment_type` to the `payment_types` seed; `dbt_utils.unique_combination_of_columns` on (`pickup_date`, `pickup_borough`) for the aggregate's grain; `not_null` on both |
 | Singular (1) | `assert_agg_revenue_matches_fct`: total revenue in `agg_daily_zone_revenue` reconciles to `fct_trips` (within $1 for rounding) |
 
 ### What the tests and profiling found
@@ -142,8 +143,6 @@ The convention is to deduplicate in staging. Here, staging is views, so a window
 
 | Feature | What it will show |
 |---|---|
-| **Seed** `payment_types.csv` | Payment code → description lookup kept in Git (`dbt seed`) |
-| **Macro** `safe_divide` | Reusable Jinja macro replacing `nullif` division for speed and tip % |
 | **Snapshot** `snap_taxi_zones` | SCD Type 2 history (`dbt_valid_from` / `dbt_valid_to`) after editing a zone |
 | **Source freshness** | Configured as a warning; documented as non-meaningful for historical files |
 | **Docs** | Descriptions on all mart columns, `dbt docs generate`, lineage graph on GitHub Pages |
@@ -186,9 +185,13 @@ nyc_taxi_dbt/
 │       └── agg_daily_zone_revenue.sql
 ├── tests/
 │   └── assert_agg_revenue_matches_fct.sql   # singular reconciliation test
-├── seeds/        🔜 payment_types.csv
+├── seeds/
+│   ├── payment_types.csv           # TLC payment codes → names (7 rows)
+│   └── _seeds.yml                  # column types + 3 tests
 ├── snapshots/    🔜 snap_taxi_zones.sql
-├── macros/       🔜 safe_divide.sql
+├── macros/
+│   ├── safe_divide.sql             # Jinja macro: division that returns null on a zero denominator
+│   └── _macros.yml                 # macro docs
 ├── data/raw/     (gitignored) TLC Parquet + zone CSV
 ├── dbt_project.yml
 ├── packages.yml                    # dbt_utils
