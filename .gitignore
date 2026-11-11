@@ -7,3 +7,5 @@ logs/
 data/
 *.duckdb
 *.duckdb.wal
+
+LEARNINGS.md

@@ -22,10 +22,10 @@ It is the SQL/analytics-engineering companion to [NYC-Taxi-Pipeline](https://git
   │ yellow_tripdata_2024-02  │──┐
   │ yellow_tripdata_2024-03  │  │  ┌────────────┐   ┌──────────────────┐                                   ┌───────────────────────────┐
   │   (.parquet, 9.55M rows) │  └─▶│ yellow_    │──▶│ stg_yellow_trips │──┐   ┌──────────────────────┐  ┌──▶│ fct_trips            ✅    │
-  └──────────────────────────┘     │ trips      │   └──────────────────┘  ├──▶│ int_trips_enriched   │──┤   │ (→ incremental 🔜)        │
+  └──────────────────────────┘     │ trips      │   └──────────────────┘  ├──▶│ int_trips_enriched   │──┤   │ (incremental)             │
   ┌──────────────────────────┐     ├────────────┤   ┌──────────────────┐  │   │ zone join, derived   │  │   └───────────────────────────┘
   │ taxi_zone_lookup.csv     │────▶│ taxi_zones │──▶│ stg_taxi_zones   │──┤   │ metrics, DQ flags    │  └──▶┌───────────────────────────┐
-  │   (265 zones)            │     └────────────┘   └──────────────────┘  │   └──────────────────────┘      │ agg_daily_zone_revenue 🔜 │
+  │   (265 zones)            │     └────────────┘   └──────────────────┘  │   └──────────────────────┘      │ agg_daily_zone_revenue ✅ │
   └──────────────────────────┘                                            │                                 └───────────────────────────┘
                                    seeds/payment_types.csv 🔜             └────────────────────────────────▶┌───────────────────────────┐
                                    snapshots/snap_taxi_zones 🔜 (SCD2)                                       │ dim_zones            ✅    │
@@ -54,7 +54,7 @@ It is the SQL/analytics-engineering companion to [NYC-Taxi-Pipeline](https://git
 | **Sources** | external files | Declare raw data once; models reference it by name | `raw.yellow_trips`, `raw.taxi_zones` |
 | **Staging** | view | 1:1 with each source: rename to snake_case, cast types. No joins, no business logic | `stg_yellow_trips`, `stg_taxi_zones` |
 | **Intermediate** | ephemeral | Joins, derived metrics, data-quality flags | `int_trips_enriched` |
-| **Marts** | table | Star schema that analysts and dashboards query | `fct_trips`, `dim_zones`, `agg_daily_zone_revenue` 🔜 |
+| **Marts** | table (`fct_trips`: incremental) | Star schema that analysts and dashboards query | `fct_trips`, `dim_zones`, `agg_daily_zone_revenue` |
 
 Materializations are set per folder in `dbt_project.yml` and can be overridden per model.
 
@@ -83,20 +83,40 @@ Design rule: **remove what is impossible, flag what is questionable.** Each mart
 - **`fct_trips`**: grain is **one row per trip**. Holds IDs, measures and quality flags; zone descriptions live in `dim_zones` (star schema).
   - **Surrogate key** `trip_id` from `dbt_utils.generate_surrogate_key` over 9 columns, because TLC data has no trip ID.
   - **Deduplication** with `qualify row_number() over (partition by trip_id ...) = 1`.
-  - **9,554,588 rows.** About 50 s to build; the full `dbt build` takes about 1 min.
-- 🔜 **`agg_daily_zone_revenue`**: revenue, trip count and average fare by day × borough. Reversals are kept so revenue nets out correctly; averages use `is_valid_for_analysis`.
+  - **9,554,588 rows.**
+  - **Incremental** (`unique_key='trip_id'`, `delete+insert`). Each run loads only TLC file months not already in the table: `where file_month > (select max(file_month) from {{ this }})`. See [Incremental load](#incremental-load) below.
+- **`agg_daily_zone_revenue`**: grain is **one row per pickup date × pickup borough** (721 rows). Revenue totals keep reversals so refunds net to zero; averages (fare, distance, duration) use only `is_valid_for_analysis` trips, and average tip % uses card trips only, because TLC doesn't record cash tips.
+  - Manhattan ≈ **$194M** across 8.4M trips; Queens ≈ **$57M** across 0.8M trips, with an average fare of about $53, three times Manhattan's (JFK and LaGuardia).
+
+### Incremental load
+
+The watermark is the **source file month**, not the pickup timestamp. 47 real trips (e.g. Jan 31 23:59) are published in the *next* month's file, and a `pickup_at > max(pickup_at)` filter would skip them forever. Filtering on `file_month` loads them with their file.
+
+Simulated monthly releases by adding one Parquet file to `data/raw/` at a time:
+
+| Run | Rows processed | Time |
+|---|---|---|
+| First load (Jan, `--full-refresh`) | 2,964,563 | 8.76 s |
+| Incremental: add Feb | 3,007,516 | 9.67 s |
+| Incremental: add Mar | 3,582,509 | 11.39 s |
+| Full refresh, all 3 months | 9,554,588 | 46.96 s |
+
+- The incremental and full-refresh tables are identical: 9,554,588 rows either way.
+- Adding a month incrementally took **11.4 s vs 47.0 s for a full rebuild (~4× faster)**, processing 37% of the rows. The gap grows with every month of history.
+- Known limits: corrected re-published months aren't reloaded (would need a lookback window or a periodic `--full-refresh`), and hard deletes upstream aren't detected.
 
 ---
 
 ## Data quality
 
-### Tests: 23 total, all passing
+### Tests: 27 total, all passing
 
 | Layer | Tests |
 |---|---|
 | Staging (11) | `unique` / `not_null` on zone ID; `not_null` on timestamps and location IDs; `accepted_values` on `payment_type`; `relationships` from pickup/dropoff location to zones; conditional `not_null` on `passenger_count` (`where: payment_type != 0`) |
 | Intermediate (6) | `not_null` on both boroughs (join worked) and `file_month` (regex worked); `accepted_values` on borough; `dbt_utils.expression_is_true` (`dropoff_at >= pickup_at`); `dbt_utils.accepted_range` (duration ≥ 0) |
-| Marts (6) | `unique` / `not_null` on `dim_zones.location_id` and `fct_trips.trip_id`; `relationships` from fact to dimension for both location IDs |
+| Marts (9) | `unique` / `not_null` on `dim_zones.location_id` and `fct_trips.trip_id`; `relationships` from fact to dimension for both location IDs; `dbt_utils.unique_combination_of_columns` on (`pickup_date`, `pickup_borough`) for the aggregate's grain; `not_null` on both |
+| Singular (1) | `assert_agg_revenue_matches_fct`: total revenue in `agg_daily_zone_revenue` reconciles to `fct_trips` (within $1 for rounding) |
 
 ### What the tests and profiling found
 
@@ -122,11 +142,8 @@ The convention is to deduplicate in staging. Here, staging is views, so a window
 
 | Feature | What it will show |
 |---|---|
-| **Incremental `fct_trips`** | `materialized='incremental'`, `is_incremental()`, `{{ this }}`, `unique_key`. Load January, then add February and March and compare rows processed and runtime against a full rebuild. Handle the 47 cross-month boundary trips (late-arriving data). |
-| **`agg_daily_zone_revenue`** | Business-facing mart: daily revenue by borough, joined through `dim_zones` |
 | **Seed** `payment_types.csv` | Payment code → description lookup kept in Git (`dbt seed`) |
 | **Macro** `safe_divide` | Reusable Jinja macro replacing `nullif` division for speed and tip % |
-| **Singular test** | Custom SQL test, e.g. mart revenue reconciles to `fct_trips` revenue |
 | **Snapshot** `snap_taxi_zones` | SCD Type 2 history (`dbt_valid_from` / `dbt_valid_to`) after editing a zone |
 | **Source freshness** | Configured as a warning; documented as non-meaningful for historical files |
 | **Docs** | Descriptions on all mart columns, `dbt docs generate`, lineage graph on GitHub Pages |
@@ -163,13 +180,15 @@ nyc_taxi_dbt/
 │   │   ├── _intermediate.yml       # 6 tests
 │   │   └── int_trips_enriched.sql
 │   └── marts/
-│       ├── _marts.yml              # 6 tests
+│       ├── _marts.yml              # 9 tests
 │       ├── dim_zones.sql
-│       └── fct_trips.sql
+│       ├── fct_trips.sql           # incremental
+│       └── agg_daily_zone_revenue.sql
+├── tests/
+│   └── assert_agg_revenue_matches_fct.sql   # singular reconciliation test
 ├── seeds/        🔜 payment_types.csv
 ├── snapshots/    🔜 snap_taxi_zones.sql
 ├── macros/       🔜 safe_divide.sql
-├── tests/        🔜 singular tests
 ├── data/raw/     (gitignored) TLC Parquet + zone CSV
 ├── dbt_project.yml
 ├── packages.yml                    # dbt_utils

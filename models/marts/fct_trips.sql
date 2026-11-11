@@ -1,8 +1,22 @@
--- One row per trip (grain).
+-- One row per trip (grain). Holds IDs + measures + quality flags.
+-- Incremental: each run only loads TLC file months not already in the table.
+
+{{
+    config(
+        materialized='incremental',
+        unique_key='trip_id',
+        incremental_strategy='delete+insert'
+    )
+}}
 
 with trips as (
 
     select * from {{ ref('int_trips_enriched') }}
+
+    {% if is_incremental() %}
+    -- only months newer than the latest month already loaded
+    where file_month > (select max(file_month) from {{ this }})
+    {% endif %}
 
 ),
 
