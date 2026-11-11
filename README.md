@@ -28,7 +28,7 @@ It is the SQL/analytics-engineering companion to [NYC-Taxi-Pipeline](https://git
   │   (265 zones)            │     └────────────┘   └──────────────────┘  │   └──────────────────────┘      │ agg_daily_zone_revenue ✅ │
   └──────────────────────────┘                                            │                                 └───────────────────────────┘
                                    seeds/payment_types.csv ✅             └────────────────────────────────▶┌───────────────────────────┐
-                                   snapshots/snap_taxi_zones 🔜 (SCD2)                                       │ dim_zones            ✅    │
+                                   snapshots/snap_taxi_zones ✅ (SCD2)                                       │ dim_zones            ✅    │
                                                                                                              └───────────────────────────┘
 ```
 
@@ -64,6 +64,9 @@ Materializations are set per folder in `dbt_project.yml` and can be overridden p
 - `raw.yellow_trips` reads all monthly Parquet files with one glob. `filename = true` keeps the source file name for lineage and incremental logic.
 - `raw.taxi_zones` reads the TLC zone lookup CSV.
 - Moving to a warehouse such as Snowflake means editing this one file; the models stay the same.
+- **Source freshness** on `raw.yellow_trips`: `loaded_at_field: tpep_pickup_datetime`, `warn_after: 35 days` (TLC publishes monthly). `dbt source freshness` returns **WARN**, which is correct: the newest record is 2024-04-01 00:34, about 955 days old. There's no `error_after`, because this historical dataset would fail every run.
+  - The TLC files have no load timestamp, so pickup time stands in for it. In production I'd use a loader-added column (e.g. Fivetran `_loaded_at`, or `metadata$file_last_modified` captured during `COPY INTO`). The newest pickup here is a boundary trip from the March file, which shows why event time is a weak proxy for arrival time.
+  - In a pipeline it runs before `dbt build` (`load → dbt source freshness → dbt build`), so stale raw data stops the run instead of silently rebuilding marts.
 
 ### Staging
 - **`stg_yellow_trips`**: 19 raw columns renamed (`PULocationID` → `pickup_location_id`, `tpep_pickup_datetime` → `pickup_at`, …), IDs cast to integer, plus `source_file`. **9,554,778 rows.**
@@ -87,6 +90,10 @@ Design rule: **remove what is impossible, flag what is questionable.** Each mart
   - **Incremental** (`unique_key='trip_id'`, `delete+insert`). Each run loads only TLC file months not already in the table: `where file_month > (select max(file_month) from {{ this }})`. See [Incremental load](#incremental-load) below.
 - **`agg_daily_zone_revenue`**: grain is **one row per pickup date × pickup borough** (721 rows). Revenue totals keep reversals so refunds net to zero; averages (fare, distance, duration) use only `is_valid_for_analysis` trips, and average tip % uses card trips only, because TLC doesn't record cash tips.
   - Manhattan ≈ **$194M** across 8.4M trips; Queens ≈ **$57M** across 0.8M trips, with an average fare of about $53, three times Manhattan's (JFK and LaGuardia).
+
+### Seed and snapshot
+- **`payment_types` seed:** the 7 TLC payment codes from the data dictionary PDF, kept as a version-controlled CSV and tested. `fct_trips.payment_type` has a `relationships` test against it.
+- **`snap_taxi_zones` snapshot (SCD Type 2):** history of the raw zone lookup using the `check` strategy, since the CSV has no `updated_at`. Demo: reclassifying zone 4 (Alphabet City) from Yellow Zone to Boro Zone closed the old row (`dbt_valid_to` set) and added a current one: 265 → 266 rows, still 265 current. Reverting it added a third version, so the history shows Yellow → Boro → Yellow. This allows point-in-time joins (trip to the zone version valid at pickup), which an upsert/Type 1 dimension can't support.
 
 ### Incremental load
 
@@ -143,8 +150,6 @@ The convention is to deduplicate in staging. Here, staging is views, so a window
 
 | Feature | What it will show |
 |---|---|
-| **Snapshot** `snap_taxi_zones` | SCD Type 2 history (`dbt_valid_from` / `dbt_valid_to`) after editing a zone |
-| **Source freshness** | Configured as a warning; documented as non-meaningful for historical files |
 | **Docs** | Descriptions on all mart columns, `dbt docs generate`, lineage graph on GitHub Pages |
 | **CI** | GitHub Actions: install dbt, run `dbt build` against a committed sample (`ci` target) on every push; optionally Slim CI with `state:modified+` |
 | **Stretch: Snowflake** | Same project on a second target: raw loaded via stage + `COPY INTO`, sources repointed, dialect differences handled with dbt cross-database macros |
@@ -188,7 +193,8 @@ nyc_taxi_dbt/
 ├── seeds/
 │   ├── payment_types.csv           # TLC payment codes → names (7 rows)
 │   └── _seeds.yml                  # column types + 3 tests
-├── snapshots/    🔜 snap_taxi_zones.sql
+├── snapshots/
+│   └── snap_taxi_zones.yml         # SCD Type 2 history of the raw zone lookup (check strategy)
 ├── macros/
 │   ├── safe_divide.sql             # Jinja macro: division that returns null on a zero denominator
 │   └── _macros.yml                 # macro docs

@@ -8,8 +8,11 @@ sources:
         description: Yellow taxi trips, one row per trip, Jan-Mar 2024
         meta:
           external_location: "read_parquet('data/raw/yellow_tripdata_*.parquet', filename=true)"
+        config:
+          loaded_at_field: tpep_pickup_datetime
+          freshness:
+            warn_after: {count: 35, period: day}
       - name: taxi_zones
         description: TLC zone lookup (LocationID -> borough, zone)
         meta:
           external_location: "read_csv_auto('data/raw/taxi_zone_lookup.csv')"
-          
