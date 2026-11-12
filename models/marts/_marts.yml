@@ -2,47 +2,116 @@ version: 2
 
 models:
   - name: dim_zones
-    description: One row per TLC taxi zone (265). Join to fct_trips on location IDs.
+    description: One row per TLC taxi zone (265). Join to fct_trips on pickup/dropoff location IDs.
     columns:
       - name: location_id
         description: Primary key. TLC zone ID.
         data_tests:
           - unique
           - not_null
+      - name: zone_name
+        description: TLC zone name, e.g. "JFK Airport", "Upper East Side North".
+      - name: borough
+        description: Manhattan, Brooklyn, Queens, Bronx, Staten Island, EWR, Unknown or N/A.
+      - name: service_zone
+        description: TLC service area, e.g. Yellow Zone, Boro Zone, Airports, EWR.
+      - name: is_airport
+        description: True for zones whose name contains "Airport" (JFK, LaGuardia, Newark).
+      - name: is_unknown_location
+        description: True for location IDs 264 and 265 (unknown / outside NYC).
 
   - name: fct_trips
     description: >
-      One row per yellow taxi trip, Jan-Mar 2024. Reversals (negative fares) are
+      One row per yellow taxi trip, Jan-Mar 2024 (grain). Incremental: each run loads
+      only TLC file months not already in the table. Reversals (negative fares) are
       kept so revenue nets out; filter on is_valid_for_analysis for averages.
     columns:
       - name: trip_id
-        description: Surrogate key, a hash of the columns that identify a trip.
+        description: "{{ doc('trip_id') }}"
         data_tests:
           - unique
           - not_null
+      - name: vendor_id
+        description: TPEP provider. 1 = Creative Mobile Technologies, 2 = Curb Mobility, 6 = Myle Technologies.
       - name: payment_type
+        description: "{{ doc('payment_type') }}"
         data_tests:
           - relationships:
               arguments:
                 to: ref('payment_types')
                 field: payment_type
+      - name: rate_code_id
+        description: Final rate code. 1 = Standard, 2 = JFK, 3 = Newark, 4 = Nassau/Westchester, 5 = Negotiated, 6 = Group ride, 99 = Unknown.
       - name: pickup_location_id
+        description: "{{ doc('location_id') }}"
         data_tests:
           - relationships:
               arguments:
                 to: ref('dim_zones')
                 field: location_id
       - name: dropoff_location_id
+        description: "{{ doc('location_id') }}"
         data_tests:
           - relationships:
               arguments:
                 to: ref('dim_zones')
                 field: location_id
-  
-  
+      - name: pickup_at
+        description: Meter engaged (trip start) timestamp.
+      - name: dropoff_at
+        description: Meter disengaged (trip end) timestamp.
+      - name: pickup_date
+        description: Date of pickup_at.
+      - name: pickup_hour
+        description: Hour of pickup_at (0-23).
+      - name: is_weekend
+        description: True when the pickup is on a Saturday or Sunday.
+      - name: file_month
+        description: "{{ doc('file_month') }}"
+      - name: passenger_count
+        description: Number of passengers. Always null on flex-fare trips (payment_type = 0).
+      - name: trip_distance
+        description: Trip distance in miles reported by the taximeter.
+      - name: trip_duration_min
+        description: Minutes between pickup_at and dropoff_at.
+      - name: avg_speed_mph
+        description: trip_distance / duration in hours. Null when duration is 0 (safe_divide).
+      - name: fare_amount
+        description: Time-and-distance meter fare in dollars. Negative on reversal rows.
+      - name: extra
+        description: Miscellaneous extras and surcharges (e.g. rush hour, overnight).
+      - name: mta_tax
+        description: MTA tax triggered by the metered rate.
+      - name: tip_amount
+        description: Tip in dollars. Only recorded for card payments; cash tips are not captured.
+      - name: tolls_amount
+        description: Total tolls paid in the trip.
+      - name: improvement_surcharge
+        description: Improvement surcharge assessed at flag drop.
+      - name: congestion_surcharge
+        description: NYS congestion surcharge.
+      - name: airport_fee
+        description: Fee for pickups at LaGuardia and JFK.
+      - name: total_amount
+        description: Total charged to the passenger, excluding cash tips. Use this for revenue.
+      - name: tip_pct
+        description: tip_amount / fare_amount. Null when fare is 0 (safe_divide). Meaningful only for card trips.
+      - name: is_reversal
+        description: "{{ doc('is_reversal') }}"
+      - name: is_in_file_month
+        description: True when the pickup month equals file_month. False for the 47 trips published in the next month's file.
+      - name: has_valid_duration
+        description: True when trip_duration_min is between 1 and 300.
+      - name: has_valid_distance
+        description: True when trip_distance is greater than 0 and at most 200 miles.
+      - name: has_valid_fare_cap
+        description: True when fare_amount is at most $500.
+      - name: is_valid_for_analysis
+        description: "{{ doc('is_valid_for_analysis') }}"
+
   - name: agg_daily_zone_revenue
     description: >
-      One row per pickup date and pickup borough. Revenue is net of reversals;
+      One row per pickup date and pickup borough (grain). Revenue is net of reversals;
       averages use only trips where is_valid_for_analysis is true.
     data_tests:
       - dbt_utils.unique_combination_of_columns:
@@ -52,15 +121,30 @@ models:
               - pickup_borough
     columns:
       - name: pickup_date
+        description: Date of pickup.
         data_tests:
           - not_null
       - name: pickup_borough
+        description: Pickup borough from dim_zones.
         data_tests:
           - not_null
       - name: trip_count
         description: Trips in the day/borough, excluding reversal rows.
+      - name: reversal_count
+        description: Reversal rows (negative fares) in the day/borough.
+      - name: fare_revenue
+        description: Sum of fare_amount, net of reversals.
+      - name: tip_revenue
+        description: Sum of tip_amount (card tips only; cash tips are not recorded).
       - name: total_revenue
         description: Sum of total_amount including reversals, so refunded trips net to zero.
-
-  
-  
+      - name: reversed_amount
+        description: Sum of total_amount on reversal rows (a negative number).
+      - name: avg_fare
+        description: Average fare_amount over valid trips.
+      - name: avg_distance_mi
+        description: Average trip_distance over valid trips.
+      - name: avg_duration_min
+        description: Average trip_duration_min over valid trips.
+      - name: avg_card_tip_pct
+        description: Average tip_pct over valid credit-card trips (payment_type = 1).
