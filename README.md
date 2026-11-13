@@ -5,23 +5,33 @@
 ![DuckDB](https://img.shields.io/badge/DuckDB-1.x-FFF000)
 ![Python](https://img.shields.io/badge/Python-3.12-blue)
 
-I built this to learn dbt properly by modeling a real, messy dataset end to end. It takes 9.5M NYC yellow taxi trips (Jan–Mar 2024, straight from the TLC) and turns them into a small, tested star schema in DuckDB.
+I built this to learn dbt properly by modeling a real, messy dataset end to end. It takes 9.5M NYC yellow taxi trips (Jan–Mar 2024, straight from the TLC) and turns them into a small, tested star schema in DuckDB: 31 data tests, an incremental fact table that adds a month about 4× faster than a full rebuild, and CI on every push.
+
+**[Browse the live docs and lineage graph →](https://sidpatondikar.github.io/nyc-taxi-dbt/)** (every model and column, with the SQL behind it)
 
 It's a companion to my [NYC-Taxi-Pipeline](https://github.com/sidpatondikar/NYC-Taxi-Pipeline) project, which moves the same data with PySpark, Kafka and Airflow. That one is about getting data from A to B; this one is about modeling it so the numbers can be trusted.
 
 ## How it's laid out
 
-```
-raw Parquet + zone CSV
-        │
-   staging (views)          rename, cast, nothing else
-        │
-   intermediate (ephemeral) zone joins, derived metrics, data-quality flags
-        │
-   marts (tables)           fct_trips (incremental), dim_zones, agg_daily_zone_revenue
+```mermaid
+flowchart LR
+    yt[(raw.yellow_trips)] --> syt[stg_yellow_trips]
+    tz[(raw.taxi_zones)] --> stz[stg_taxi_zones]
+    tz --> snap[[snap_taxi_zones<br/>SCD Type 2]]
+    syt --> int[int_trips_enriched]
+    stz --> int
+    stz --> dim[dim_zones]
+    int --> fct[fct_trips<br/>incremental]
+    fct --> agg[agg_daily_zone_revenue]
+    dim --> agg
+    seed[/payment_types seed/] -. tested against .-> fct
 ```
 
-Plus a seed for payment-type codes, an SCD Type 2 snapshot on the zone lookup, a `safe_divide` macro, source freshness, and 31 tests. GitHub Actions runs `dbt build` on every push against a month of real data.
+- **Staging** (views): rename and cast, nothing else.
+- **Intermediate** (ephemeral): zone joins, derived metrics like duration and speed, and data-quality flags.
+- **Marts** (tables): a trip-level fact, a zone dimension, and a daily revenue-by-borough table.
+
+Around that: a seed for payment-type codes, an SCD Type 2 snapshot on the zone lookup, a `safe_divide` macro, and a source freshness check. GitHub Actions runs `dbt build` on every push against a month of real data.
 
 ## What I found along the way
 
@@ -48,12 +58,16 @@ curl -o data/raw/taxi_zone_lookup.csv https://d37ci6vzurychx.cloudfront.net/misc
 
 dbt deps
 dbt build          # about a minute
-dbt docs generate && dbt docs serve   # docs and lineage graph
+dbt docs generate && dbt docs serve   # docs locally (or use the live link above)
 ```
 
-## Stack
+## Stack and skills
 
-dbt Core 1.12 with the DuckDB adapter, dbt_utils, GitHub Actions. Data from the [NYC TLC Trip Record Data](https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page).
+**Tools:** dbt Core 1.12 (DuckDB adapter), dbt_utils, SQL, GitHub Actions, GitHub Pages.
+
+**What it covers:** dimensional modeling (star schema, SCD Type 2), incremental models and late-arriving data, data-quality testing (generic, package and singular tests), Jinja macros, seeds, source freshness, documentation and lineage, CI.
+
+Data from the [NYC TLC Trip Record Data](https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page).
 
 ## If I kept going
 
