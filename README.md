@@ -68,7 +68,3 @@ dbt docs generate && dbt docs serve   # docs locally (or use the live link above
 **What it covers:** dimensional modeling (star schema, SCD Type 2), incremental models and late-arriving data, data-quality testing (generic, package and singular tests), Jinja macros, seeds, source freshness, documentation and lineage, CI.
 
 Data from the [NYC TLC Trip Record Data](https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page).
-
-## If I kept going
-
-Slim CI so pull requests only build what changed, a lookback window on the incremental model for corrected files, and running the same project against Snowflake.
