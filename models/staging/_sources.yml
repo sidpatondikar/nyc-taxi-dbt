@@ -5,9 +5,9 @@ sources:
     description: NYC TLC raw files, downloaded into data/raw/
     tables:
       - name: yellow_trips
-        description: Yellow taxi trips, one row per trip, Jan-Mar 2024
+        description: Yellow taxi trips, one row per trip, one Parquet file per month (2024 onward)
         meta:
-          external_location: "read_parquet('data/raw/yellow_tripdata_*.parquet', filename=true)"
+             external_location: "read_parquet('data/raw/yellow_tripdata_*.parquet', filename=true, union_by_name=true)"
         config:
           loaded_at_field: tpep_pickup_datetime
           freshness:

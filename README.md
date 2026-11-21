@@ -5,7 +5,7 @@
 ![DuckDB](https://img.shields.io/badge/DuckDB-1.x-FFF000)
 ![Python](https://img.shields.io/badge/Python-3.12-blue)
 
-I built this to learn dbt properly by modeling a real, messy dataset end to end. It takes 9.5M NYC yellow taxi trips (Jan–Mar 2024, straight from the TLC) and turns them into a small, tested star schema in DuckDB: 31 data tests, an incremental fact table that adds a month about 4× faster than a full rebuild, and CI on every push.
+I built this to learn dbt properly by modeling a real, messy dataset end to end. It takes 41M NYC yellow taxi trips (all of 2024, straight from the TLC) and turns them into a small, tested star schema in DuckDB: 31 data tests, an incremental fact table so a new month doesn't mean rebuilding the whole year, and CI on every push.
 
 **[Browse the live docs and lineage graph →](https://sidpatondikar.github.io/nyc-taxi-dbt/)** (every model and column, with the SQL behind it)
 
@@ -37,12 +37,12 @@ Around that: a seed for payment-type codes, an SCD Type 2 snapshot on the zone l
 
 Most of the interesting work was deciding what to do with bad-looking data, not writing the SQL.
 
-- **Negative fares weren't errors.** 136K rows (−$2.4M) looked like junk, but about three quarters of them exactly mirror an earlier positive row: they're refunds and disputes. Filtering fares to ≥ $0, which is what I'd done in my Spark project, keeps the original charge and drops the refund, overstating revenue by roughly $2.4M. I kept them and flagged them instead.
-- **A failing test turned into a business finding.** `payment_type = 0` failed my accepted-values test. It's the TLC's code for flex-fare trips (752K trips, $14M), and those are exactly the trips with no passenger count.
-- **The obvious incremental filter would have lost data.** Some trips that start just before midnight on the last day of a month show up in the next month's file, so filtering on `pickup_at > max(pickup_at)` would skip them for good. The model uses the source file's month as the watermark instead. Adding a month takes about 11 s versus 47 s for a full rebuild.
+- **Negative fares weren't errors.** 731K rows (−$16.7M across 2024) looked like junk. When I checked the first quarter, about three quarters of them exactly mirrored an earlier positive row: they're refunds and disputes. Filtering fares to ≥ $0, which is what I'd done in my Spark project, keeps the original charge and drops the refund, overstating 2024 revenue by about $16.7M. I kept them and flagged them instead.
+- **A failing test turned into a business finding.** `payment_type = 0` failed my accepted-values test. It's the TLC's code for flex-fare trips (4.1M trips and $101M in 2024), and they're the only trips with no passenger count.
+- **The obvious incremental filter would have lost data.** Some trips that start just before midnight on the last day of a month show up in the next month's file, so filtering on `pickup_at > max(pickup_at)` would skip them for good. The model uses the source file's month as the watermark instead. When I added April–December on top of the first quarter, the incremental load matched a full rebuild row for row (41,168,092), and a rebuild from scratch now takes about 13 minutes.
 - **It caught a bug in my older project.** Joining to the real zone lookup showed my Spark pipeline had been assigning boroughs by ID range, which puts the Upper East Side in Staten Island.
 
-My rule throughout: remove what's physically impossible (189 rows), flag what's questionable, and let each mart decide which flags matter. Revenue keeps reversals; averages use only clean trips (96% of them).
+My rule throughout: remove what's physically impossible or duplicated (1,628 rows in 2024), flag what's questionable, and let each mart decide which flags matter. Revenue keeps reversals; averages use only clean trips (96% of them). Those rules were written on three months of data and held up unchanged on the full year.
 
 ## Running it
 
@@ -50,14 +50,14 @@ My rule throughout: remove what's physically impossible (189 rows), flag what's 
 pip install -r requirements.txt
 
 mkdir -p data/raw
-for m in 01 02 03; do
+for m in 01 02 03 04 05 06 07 08 09 10 11 12; do
   curl -o data/raw/yellow_tripdata_2024-$m.parquet \
     https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2024-$m.parquet
 done
 curl -o data/raw/taxi_zone_lookup.csv https://d37ci6vzurychx.cloudfront.net/misc/taxi_zone_lookup.csv
 
 dbt deps
-dbt build          # about a minute
+dbt build          # the full year takes a while; download fewer months for a quick run
 dbt docs generate && dbt docs serve   # docs locally (or use the live link above)
 ```
 
