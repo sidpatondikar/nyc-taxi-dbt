@@ -13,3 +13,5 @@ README_DETAILED.mdtmp_duckdb/
 *.duckdb.tmp/
 
 README_DETAILED.md
+.snowflake/
+*.p8

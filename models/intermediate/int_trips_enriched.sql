@@ -1,4 +1,7 @@
 -- One row per trip, enriched with zone names, derived metrics, and data-quality flags.
+-- Warehouse-portable: runs on DuckDB and Snowflake (see macros/cross_db.sql).
+
+{%- set duration_sec = dbt.datediff('pickup_at', 'dropoff_at', 'second') %}
 
 with trips as (
 
@@ -35,13 +38,13 @@ derived as (
 
     select
         *,
-        regexp_extract(source_file, '(\d{4}-\d{2})\.parquet', 1)          as file_month,
-        cast(regexp_extract(source_file, '(\d{4}-\d{2})\.parquet', 1) || '-01' as date) as file_month_start,
+        {{ file_month_from_filename('source_file') }}                     as file_month,
+        cast({{ file_month_from_filename('source_file') }} || '-01' as date) as file_month_start,
         cast(pickup_at as date)                                            as pickup_date,
         hour(pickup_at)                                                    as pickup_hour,
-        isodow(pickup_at) in (6, 7)                                        as is_weekend,
-        date_diff('second', pickup_at, dropoff_at) / 60.0                  as trip_duration_min,
-        {{ safe_divide("trip_distance", "date_diff('second', pickup_at, dropoff_at) / 3600.0") }} as avg_speed_mph,
+        {{ iso_day_of_week('pickup_at') }} in (6, 7)                       as is_weekend,
+        {{ duration_sec }} / 60.0                                          as trip_duration_min,
+        {{ safe_divide("trip_distance", duration_sec ~ " / 3600.0") }}     as avg_speed_mph,
         {{ safe_divide("tip_amount", "fare_amount") }}                     as tip_pct
     from joined
 
@@ -53,7 +56,7 @@ flagged as (
     select
         *,
         fare_amount < 0                                as is_reversal,
-        strftime(pickup_at, '%Y-%m') = file_month      as is_in_file_month,
+        cast({{ dbt.date_trunc('month', 'pickup_at') }} as date) = file_month_start as is_in_file_month,
         trip_duration_min between 1 and 300            as has_valid_duration,
         trip_distance > 0 and trip_distance <= 200     as has_valid_distance,
         fare_amount <= 500                             as has_valid_fare_cap
@@ -79,5 +82,5 @@ final as (
 -- 4. remove only physically impossible rows
 select * from final
 where dropoff_at >= pickup_at
-  and pickup_at >= file_month_start - interval 1 day
-  and pickup_at <  file_month_start + interval 1 month + interval 1 day
+  and pickup_at >= {{ dbt.dateadd('day', -1, 'file_month_start') }}
+  and pickup_at <  {{ dbt.dateadd('day', 1, dbt.dateadd('month', 1, 'file_month_start')) }}

@@ -6,5 +6,16 @@ nyc_taxi_dbt:
       path: nyc_taxi.duckdb
       threads: 4
       settings:
-        memory_limit: '6GB'                 
-        preserve_insertion_order: false  
+        memory_limit: '6GB'
+        preserve_insertion_order: false
+
+    snowflake:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT', '') }}"
+      user: "{{ env_var('SNOWFLAKE_USER', '') }}"
+      private_key_path: "{{ env_var('SNOWFLAKE_PRIVATE_KEY_PATH', '') }}"
+      role: transformer
+      warehouse: transforming_wh
+      database: nyc_taxi
+      schema: analytics
+      threads: 4

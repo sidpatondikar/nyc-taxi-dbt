@@ -3,9 +3,10 @@
 [![dbt CI](https://github.com/sidpatondikar/nyc-taxi-dbt/actions/workflows/dbt_ci.yml/badge.svg)](https://github.com/sidpatondikar/nyc-taxi-dbt/actions/workflows/dbt_ci.yml)
 ![dbt](https://img.shields.io/badge/dbt_Core-1.12-FF694B)
 ![DuckDB](https://img.shields.io/badge/DuckDB-1.x-FFF000)
+![Snowflake](https://img.shields.io/badge/Snowflake-29B5E8)
 ![Python](https://img.shields.io/badge/Python-3.12-blue)
 
-I built this to learn dbt properly by modeling a real, messy dataset end to end. It takes 41M NYC yellow taxi trips (all of 2024, straight from the TLC) and turns them into a small, tested star schema in DuckDB: 31 data tests, an incremental fact table so a new month doesn't mean rebuilding the whole year, and CI on every push.
+I built this to learn dbt properly by modeling a real, messy dataset end to end. It takes 41M NYC yellow taxi trips (all of 2024, straight from the TLC) and turns them into a small, tested star schema: 31 data tests, an incremental fact table so a new month doesn't mean rebuilding the whole year, and CI on every push. The same models run on DuckDB on my laptop and on Snowflake.
 
 **[Browse the live docs and lineage graph →](https://sidpatondikar.github.io/nyc-taxi-dbt/)** (every model and column, with the SQL behind it)
 
@@ -33,6 +34,12 @@ flowchart LR
 
 Around that: a seed for payment-type codes, an SCD Type 2 snapshot on the zone lookup, a `safe_divide` macro, and a source freshness check. GitHub Actions runs `dbt build` on every push against a month of real data.
 
+## Running the same project on Snowflake
+
+I started on DuckDB because it's free and runs locally, then ported the project to Snowflake as a second dbt target. The raw files go into an internal stage and are loaded with `COPY INTO`, which also records each row's file name and load time. dbt connects as a key-pair service user with a least-privilege role.
+
+Most of the models ran unchanged. The ones that didn't used DuckDB-only syntax (`interval 1 day`, `FILTER`, `regexp_extract`, `isodow`). I swapped those for dbt's cross-database macros, plus two small `adapter.dispatch` macros of my own, so there's still one version of every model. To check the port, I ran the same query against the DuckDB tables (built with the old SQL) and the Snowflake tables (built with the new SQL). Row counts, revenue and every flag count matched exactly. The 41M-row fact table builds in about 65 seconds on an X-Small warehouse, compared with 13 minutes on my laptop. DuckDB stays the default target, and CI still runs on it.
+
 ## What I found along the way
 
 Most of the interesting work was deciding what to do with bad-looking data, not writing the SQL.
@@ -58,13 +65,15 @@ curl -o data/raw/taxi_zone_lookup.csv https://d37ci6vzurychx.cloudfront.net/misc
 
 dbt deps
 dbt build          # the full year takes a while; download fewer months for a quick run
+# Snowflake: load raw.yellow_trips / raw.taxi_zones, set SNOWFLAKE_ACCOUNT, SNOWFLAKE_USER
+# and SNOWFLAKE_PRIVATE_KEY_PATH, then: dbt build --target snowflake
 dbt docs generate && dbt docs serve   # docs locally (or use the live link above)
 ```
 
 ## Stack and skills
 
-**Tools:** dbt Core 1.12 (DuckDB adapter), dbt_utils, SQL, GitHub Actions, GitHub Pages.
+**Tools:** dbt Core 1.12 (DuckDB and Snowflake adapters), Snowflake, DuckDB, dbt_utils, SQL, GitHub Actions, GitHub Pages.
 
-**What it covers:** dimensional modeling (star schema, SCD Type 2), incremental models and late-arriving data, data-quality testing (generic, package and singular tests), Jinja macros, seeds, source freshness, documentation and lineage, CI.
+**What it covers:** dimensional modeling (star schema, SCD Type 2), incremental models and late-arriving data, data-quality testing (generic, package and singular tests), Jinja macros and `adapter.dispatch`, cross-database SQL, Snowflake loading (stages, `COPY INTO`) and key-pair auth, seeds, source freshness, documentation and lineage, CI.
 
 Data from the [NYC TLC Trip Record Data](https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page).
